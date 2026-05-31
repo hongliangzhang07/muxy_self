@@ -18,7 +18,10 @@ struct PetPanelView: View {
     var body: some View {
         VStack(alignment: .trailing, spacing: UIMetrics.spacing2) {
             if let message = stateController.message {
-                PetBubble(message: message)
+                PetBubble(message: message) {
+                    NotificationStore.shared.navigate(toNotification: message.notificationID)
+                    stateController.dismissMessage()
+                }
             }
             if let package = packageStore.selectedPackage {
                 PetAnimationView(
@@ -50,6 +53,7 @@ struct PetPanelView: View {
 
 private struct PetBubble: View {
     let message: PetStateController.Message
+    let onTap: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -69,6 +73,8 @@ private struct PetBubble: View {
         .frame(maxWidth: 220, alignment: .leading)
         .background(MuxyTheme.bg, in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(MuxyTheme.border, lineWidth: 1))
+        .contentShape(RoundedRectangle(cornerRadius: 10))
+        .onTapGesture(perform: onTap)
         .transition(.scale(scale: 0.85).combined(with: .opacity))
     }
 }

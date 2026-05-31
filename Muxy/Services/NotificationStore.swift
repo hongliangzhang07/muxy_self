@@ -131,8 +131,6 @@ final class NotificationStore {
            NSApp.isActive,
            NotificationNavigator.isActiveTab(notification.tabID, appState: appState)
         {
-            playSound()
-            PetStateController.shared.react(to: notification)
             return
         }
 
@@ -167,6 +165,10 @@ final class NotificationStore {
             desktopNotifier?.deliver(notification)
         }
         playSound()
+    }
+
+    func navigate(toNotification id: UUID) {
+        activate(notificationID: id)
     }
 
     private func activate(notificationID: UUID) {

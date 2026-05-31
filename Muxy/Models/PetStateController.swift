@@ -8,6 +8,7 @@ final class PetStateController {
     struct Message: Equatable {
         let title: String
         let body: String
+        let notificationID: UUID
     }
 
     private(set) var pulse: PetState?
@@ -20,7 +21,13 @@ final class PetStateController {
 
     func react(to notification: MuxyNotification) {
         trigger(.waving)
-        showMessage(Message(title: notification.title, body: notification.body))
+        showMessage(Message(title: notification.title, body: notification.body, notificationID: notification.id))
+    }
+
+    func dismissMessage() {
+        messageClearTask?.cancel()
+        messageClearTask = nil
+        message = nil
     }
 
     func showMessage(_ newMessage: Message, holding duration: Duration = .seconds(5)) {

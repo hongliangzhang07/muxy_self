@@ -2,10 +2,10 @@
 
 ## Goal
 
-Add a lightweight Muxy pet surface that can use Codex-compatible pet packages. Muxy should ship with the existing Banana Cat package as the first bundled pet:
+Add a lightweight Muxy pet surface that can use Codex-compatible pet packages. Muxy should ship with the Orange Crab package as the first bundled pet:
 
 ```text
-Muxy/Resources/Pets/banana-cat/
+Muxy/Resources/Pets/orange-crab/
   pet.json
   spritesheet.webp
 ```
@@ -13,7 +13,7 @@ Muxy/Resources/Pets/banana-cat/
 The same package also exists locally as a generated Codex pet:
 
 ```text
-${CODEX_HOME:-$HOME/.codex}/pets/banana-cat/
+${CODEX_HOME:-$HOME/.codex}/pets/orange-crab/
   pet.json
   spritesheet.webp
 ```
@@ -28,9 +28,9 @@ Use the Codex custom pet format as the input contract:
 
 ```json
 {
-  "id": "banana-cat",
-  "displayName": "Banana Cat",
-  "description": "A tiny banana-suit cat companion with a solemn little face and practical builder energy.",
+  "id": "orange-crab",
+  "displayName": "Orange Crab",
+  "description": "A tiny orange pixel crab with black square eyes and a calm terminal companion mood.",
   "spritesheetPath": "spritesheet.webp"
 }
 ```
@@ -262,7 +262,7 @@ Add a small preference group under Interface settings:
 | Key | Type | Default |
 | --- | --- | --- |
 | `muxy.pet.enabled` | Bool | `true` |
-| `muxy.pet.selectedID` | String | `banana-cat` if bundled package is valid |
+| `muxy.pet.selectedID` | String | `orange-crab` if bundled package is valid |
 | `muxy.pet.size` | Double | `112` |
 
 The initial version can avoid a full picker if only one package exists. Once multiple pets are found, use a picker by display name.
@@ -279,7 +279,7 @@ Pet packages are local files owned by the current macOS user. Still validate def
 - do not execute anything from a pet package
 - do not load remote URLs from `pet.json`
 
-External mascot artwork is not an implementation dependency. The integration should use local pet packages, such as the existing `banana-cat`, and keep Muxy's code responsible only for discovery, validation, rendering, and state mapping.
+External mascot artwork is not an implementation dependency. The integration should use local pet packages, such as the bundled `orange-crab`, and keep Muxy's code responsible only for discovery, validation, rendering, and state mapping.
 
 ## Implementation Plan
 
@@ -297,8 +297,8 @@ Likely files:
 Muxy/Models/PetPackage.swift
 Muxy/Models/PetAnimation.swift
 Muxy/Services/PetPackageStore.swift
-Muxy/Resources/Pets/banana-cat/pet.json
-Muxy/Resources/Pets/banana-cat/spritesheet.webp
+Muxy/Resources/Pets/orange-crab/pet.json
+Muxy/Resources/Pets/orange-crab/spritesheet.webp
 Muxy/Views/Pets/PetAnimationView.swift
 Muxy/Views/Pets/PetHostView.swift
 Muxy/Views/MainWindow.swift
@@ -312,7 +312,7 @@ Tests/MuxyTests/Services/PetPackageStoreTests.swift
 Unit tests:
 
 - valid package loads from a temporary root
-- bundled `banana-cat` package is discoverable
+- bundled `orange-crab` package is discoverable
 - missing `pet.json` is ignored
 - missing `spritesheet.webp` is ignored
 - `spritesheetPath` escaping the package directory is rejected
@@ -323,8 +323,8 @@ Unit tests:
 
 Manual checks:
 
-- launch Muxy and confirm bundled `banana-cat` is selected by default
-- confirm `${CODEX_HOME:-$HOME/.codex}/pets/banana-cat` can also be discovered as a custom package
+- launch Muxy and confirm bundled `orange-crab` is selected by default
+- confirm `${CODEX_HOME:-$HOME/.codex}/pets/orange-crab` can also be discovered as a custom package
 - confirm the pet appears without blocking terminal clicks
 - confirm Reduce Motion freezes the animation
 - trigger terminal progress and confirm `running`
