@@ -48,6 +48,7 @@ let package = Package(
                 .process("Resources/Assets.xcassets"),
                 .copy("Resources/ghostty"),
                 .copy("Resources/markdown-assets"),
+                .copy("Resources/Pets"),
                 .copy("Resources/ProviderIcons"),
                 .copy("Resources/rg"),
                 .copy("Resources/scripts"),

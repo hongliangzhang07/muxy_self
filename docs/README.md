@@ -88,6 +88,7 @@ flowchart TB
 | [File Tree](architecture/file-tree.md) | Lazy tree, git-status colors, file ops |
 | [Source Control](architecture/vcs.md) | Source Control tab, PR flow |
 | [Notifications](architecture/notifications.md) | Sources, routing, click-to-navigate |
+| [Pet Integration](architecture/pet-integration.md) | Codex-compatible pet package loading and animation plan |
 | [UI Scaling](architecture/ui-scaling.md) | Centralized chrome metrics with user-adjustable scale |
 | [AI Usage Tracking](architecture/ai-usage.md) | Provider registry, credentials, refresh lifecycle |
 | [Remote Server](architecture/remote-server.md) | WebSocket server, terminal streaming, pairing |

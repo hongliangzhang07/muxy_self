@@ -132,6 +132,7 @@ final class NotificationStore {
            NotificationNavigator.isActiveTab(notification.tabID, appState: appState)
         {
             playSound()
+            PetStateController.shared.react(to: notification)
             return
         }
 
@@ -140,6 +141,7 @@ final class NotificationStore {
         scheduleSave()
         deliverNotification(notification)
         broadcastExtensionEvent(notification)
+        PetStateController.shared.react(to: notification)
     }
 
     private func broadcastExtensionEvent(_ notification: MuxyNotification) {

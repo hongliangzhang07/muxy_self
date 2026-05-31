@@ -67,6 +67,7 @@ struct MuxyApp: App {
                     DesktopNotificationService.shared.start(appState: appState)
                     MemoryDiagnostics.shared.configure(appState: appState)
                     TerminalProgressStore.shared.appState = appState
+                    PetWindowController.shared.start(appState: appState)
                     appDelegate.onTerminate = { [appState] in
                         appState.saveTerminalSessions()
                         appState.saveWorkspaces()
