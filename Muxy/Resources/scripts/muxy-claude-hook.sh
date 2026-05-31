@@ -26,9 +26,20 @@ extract_last_message() {
     printf 'Session completed'
 }
 
+extract_message() {
+    local msg=""
+    msg=$(printf '%s' "$input" | grep -o '"message":"[^"]*"' | head -1 | cut -d'"' -f4)
+    if [ -n "$msg" ]; then
+        printf '%s' "$msg" | tr '|' ' ' | head -c 200
+        return
+    fi
+    printf 'Needs attention'
+}
+
 case "$event" in
     notification)
-        send_notification "claude_hook" "Claude Code" "Needs attention"
+        body=$(extract_message)
+        send_notification "claude_hook" "Claude Code" "$body"
         ;;
     stop)
         body=$(extract_last_message)

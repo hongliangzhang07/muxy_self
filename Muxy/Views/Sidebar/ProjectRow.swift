@@ -29,6 +29,7 @@ struct ProjectRow: View {
     @State private var showColorPicker = false
     @State private var showSymbolPicker = false
     @State private var removalRequest: WorktreeRemovalRequest?
+    @State private var showAutoConfirmPrompt = false
 
     private var isActive: Bool {
         appState.activeProjectID == project.id
@@ -110,7 +111,39 @@ struct ProjectRow: View {
                     ProjectGroupMembershipMenu(project: project)
                 }
                 Divider()
+                if appState.claudeAutoConfirm(projectID: project.id, projectPath: project.path, worktreePaths: worktrees.map(\.path)) {
+                    Button("Require Confirmation (restart sessions)") {
+                        appState.setClaudeAutoConfirm(
+                            projectID: project.id,
+                            projectPath: project.path,
+                            worktreePaths: worktrees.map(\.path),
+                            enabled: false
+                        )
+                    }
+                } else {
+                    Button("Auto-confirm — Skip Permissions (restart sessions)", role: .destructive) {
+                        showAutoConfirmPrompt = true
+                    }
+                }
+                Divider()
                 Button("Remove Project", role: .destructive, action: onRemove)
+            }
+            .confirmationDialog(
+                "Enable auto-confirm for this project?",
+                isPresented: $showAutoConfirmPrompt,
+                titleVisibility: .visible
+            ) {
+                Button("Enable — Skip All Permission Prompts", role: .destructive) {
+                    appState.setClaudeAutoConfirm(
+                        projectID: project.id,
+                        projectPath: project.path,
+                        worktreePaths: worktrees.map(\.path),
+                        enabled: true
+                    )
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Claude will run every tool without asking — file edits and shell commands. Sessions will restart.")
             }
             .popover(isPresented: $showWorktreePopover, arrowEdge: .trailing) {
                 WorktreePopover(

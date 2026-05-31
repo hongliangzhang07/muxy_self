@@ -21,6 +21,33 @@ struct TerminalSessionRestorePolicyTests {
         #expect(!TerminalSessionRestorePolicy.isSafeToRestore("sudo npm run dev"))
     }
 
+    @Test("Blocks Claude auto-confirm launch command, allows normal one")
+    func blocksDangerousClaudeLaunchCommand() {
+        let session = ClaudeSession(name: "S", projectPath: "/tmp/proj")
+        #expect(!TerminalSessionRestorePolicy.isSafeToRestore(session.launchCommand(autoConfirm: true)))
+        #expect(TerminalSessionRestorePolicy.isSafeToRestore(session.launchCommand(autoConfirm: false)))
+    }
+
+    @Test("Dangerous Claude command stays blocked even with a customized excluded list")
+    func dangerousClaudeCommandBlockedWithCustomList() {
+        let original = SessionRestorePreferences.excludedCommands
+        SessionRestorePreferences.excludedCommands = ["rm"]
+        defer { SessionRestorePreferences.excludedCommands = original }
+        let dangerous = ClaudeSession(name: "S", projectPath: "/tmp/proj").launchCommand(autoConfirm: true)
+        #expect(!TerminalSessionRestorePolicy.isSafeToRestore(dangerous))
+    }
+
+    @Test("launchCommand injects dangerous flag only when autoConfirm is on")
+    func launchCommandFlagPlacement() {
+        let session = ClaudeSession(name: "S", projectPath: "/tmp/proj")
+        let on = session.launchCommand(autoConfirm: true)
+        let off = session.launchCommand(autoConfirm: false)
+        #expect(on.contains("--dangerously-skip-permissions"))
+        #expect(!off.contains("--dangerously-skip-permissions"))
+        #expect(on.contains("--resume") && on.contains("--session-id"))
+        #expect(off.contains("--resume") && off.contains("--session-id"))
+    }
+
     @Test("Blocks commands that are prefixes of excluded patterns")
     func blocksPrefixExcludedCommands() {
         #expect(!TerminalSessionRestorePolicy.isSafeToRestore("rm file.txt"))

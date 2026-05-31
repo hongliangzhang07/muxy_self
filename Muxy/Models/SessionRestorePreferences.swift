@@ -42,4 +42,8 @@ enum SessionRestorePreferences {
         "docker system prune",
         "sudo",
     ]
+
+    static let mandatoryExcludedCommands = [
+        "claude --dangerously-skip-permissions",
+    ]
 }

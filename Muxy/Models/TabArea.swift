@@ -10,14 +10,37 @@ final class TabArea: Identifiable {
     private var tabHistory: [UUID] = []
 
     private static func makeTab(for session: ClaudeSession) -> TerminalTab {
+        let autoConfirm = ClaudeSessionStore.shared.autoConfirm(forProject: session.projectPath)
         let pane = TerminalPaneState(
             projectPath: session.projectPath,
-            startupCommand: session.launchCommand,
+            startupCommand: session.launchCommand(autoConfirm: autoConfirm),
             startupCommandInteractive: true
         )
         let tab = TerminalTab(pane: pane, claudeSessionID: session.id)
         tab.customTitle = session.name
         return tab
+    }
+
+    func restartClaudeSessionPanes() -> [UUID] {
+        let store = ClaudeSessionStore.shared
+        var removedPaneIDs: [UUID] = []
+        for index in tabs.indices {
+            let tab = tabs[index]
+            guard let sessionID = tab.claudeSessionID,
+                  let oldPaneID = tab.content.pane?.id,
+                  let session = store.session(id: sessionID, forProject: projectPath)
+            else { continue }
+            removedPaneIDs.append(oldPaneID)
+            let newTab = Self.makeTab(for: session)
+            newTab.customTitle = tab.customTitle
+            newTab.colorID = tab.colorID
+            newTab.isPinned = tab.isPinned
+            let wasActive = activeTabID == tab.id
+            tabHistory = tabHistory.map { $0 == tab.id ? newTab.id : $0 }
+            tabs[index] = newTab
+            if wasActive { activeTabID = newTab.id }
+        }
+        return removedPaneIDs
     }
 
     init(projectPath: String) {

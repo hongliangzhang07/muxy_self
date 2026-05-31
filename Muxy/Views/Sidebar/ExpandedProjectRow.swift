@@ -33,6 +33,7 @@ struct ExpandedProjectRow: View {
     @State private var showSymbolPicker = false
     @State private var pendingWorktreeRemoval: WorktreeRemovalConfirmation?
     @State private var removalRequest: WorktreeRemovalRequest?
+    @State private var showAutoConfirmPrompt = false
 
     private var isActive: Bool {
         appState.activeProjectID == project.id
@@ -110,7 +111,39 @@ struct ExpandedProjectRow: View {
                 ProjectGroupMembershipMenu(project: project)
             }
             Divider()
+            if appState.claudeAutoConfirm(projectID: project.id, projectPath: project.path, worktreePaths: worktrees.map(\.path)) {
+                Button("Require Confirmation (restart sessions)") {
+                    appState.setClaudeAutoConfirm(
+                        projectID: project.id,
+                        projectPath: project.path,
+                        worktreePaths: worktrees.map(\.path),
+                        enabled: false
+                    )
+                }
+            } else {
+                Button("Auto-confirm — Skip Permissions (restart sessions)", role: .destructive) {
+                    showAutoConfirmPrompt = true
+                }
+            }
+            Divider()
             Button("Remove Project", role: .destructive, action: onRemove)
+        }
+        .confirmationDialog(
+            "Enable auto-confirm for this project?",
+            isPresented: $showAutoConfirmPrompt,
+            titleVisibility: .visible
+        ) {
+            Button("Enable — Skip All Permission Prompts", role: .destructive) {
+                appState.setClaudeAutoConfirm(
+                    projectID: project.id,
+                    projectPath: project.path,
+                    worktreePaths: worktrees.map(\.path),
+                    enabled: true
+                )
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Claude will run every tool — file edits and shell commands — without asking. The project's sessions will restart.")
         }
         .sheet(isPresented: $showCreateWorktreeSheet) {
             CreateWorktreeSheet(project: project) { result in

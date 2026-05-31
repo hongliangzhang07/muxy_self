@@ -232,6 +232,36 @@ final class AppState {
         return workspaceRoots[key]?.allAreas() ?? []
     }
 
+    private func claudeAutoConfirmPaths(projectID: UUID, projectPath: String, worktreePaths: [String]) -> Set<String> {
+        let openPaths = workspaceRoots
+            .filter { $0.key.projectID == projectID }
+            .flatMap { $0.value.allAreas() }
+            .map(\.projectPath)
+        return Set(worktreePaths + openPaths + [projectPath])
+    }
+
+    func claudeAutoConfirm(projectID: UUID, projectPath: String, worktreePaths: [String]) -> Bool {
+        claudeAutoConfirmPaths(projectID: projectID, projectPath: projectPath, worktreePaths: worktreePaths)
+            .contains { ClaudeSessionStore.shared.autoConfirm(forProject: $0) }
+    }
+
+    func setClaudeAutoConfirm(projectID: UUID, projectPath: String, worktreePaths: [String], enabled: Bool) {
+        for path in claudeAutoConfirmPaths(projectID: projectID, projectPath: projectPath, worktreePaths: worktreePaths) {
+            ClaudeSessionStore.shared.setAutoConfirm(enabled, forProject: path)
+        }
+        let openAreas = workspaceRoots.filter { $0.key.projectID == projectID }.flatMap { $0.value.allAreas() }
+        var removedPaneIDs: [UUID] = []
+        for area in openAreas {
+            removedPaneIDs.append(contentsOf: area.restartClaudeSessionPanes())
+        }
+        for paneID in removedPaneIDs {
+            terminalViews.removeView(for: paneID)
+            TerminalProgressStore.shared.resetPane(paneID)
+        }
+        guard !openAreas.isEmpty else { return }
+        saveWorkspaces()
+    }
+
     func locatePane(paneID: UUID) -> (worktreeKey: WorktreeKey, pane: TerminalPaneState)? {
         for (key, root) in workspaceRoots {
             for area in root.allAreas() {

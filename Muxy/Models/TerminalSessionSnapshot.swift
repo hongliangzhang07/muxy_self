@@ -117,7 +117,7 @@ enum TerminalSessionRestorePolicy {
     }
 
     private static func isExcluded(_ command: String) -> Bool {
-        SessionRestorePreferences.excludedCommands.contains { pattern in
+        (SessionRestorePreferences.excludedCommands + SessionRestorePreferences.mandatoryExcludedCommands).contains { pattern in
             matches(pattern: pattern, command: command)
         }
     }

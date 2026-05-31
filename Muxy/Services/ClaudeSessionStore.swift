@@ -13,10 +13,27 @@ final class ClaudeSessionStore {
     private struct FileModel: Codable {
         var schemaVersion: Int
         var sessionsByProject: [String: [ClaudeSession]]
+        var autoConfirmByProject: [String: Bool]
 
-        init(schemaVersion: Int = 1, sessionsByProject: [String: [ClaudeSession]] = [:]) {
+        init(
+            schemaVersion: Int = 1,
+            sessionsByProject: [String: [ClaudeSession]] = [:],
+            autoConfirmByProject: [String: Bool] = [:]
+        ) {
             self.schemaVersion = schemaVersion
             self.sessionsByProject = sessionsByProject
+            self.autoConfirmByProject = autoConfirmByProject
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case schemaVersion, sessionsByProject, autoConfirmByProject
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+            sessionsByProject = try container.decodeIfPresent([String: [ClaudeSession]].self, forKey: .sessionsByProject) ?? [:]
+            autoConfirmByProject = try container.decodeIfPresent([String: Bool].self, forKey: .autoConfirmByProject) ?? [:]
         }
     }
 
@@ -44,6 +61,19 @@ final class ClaudeSessionStore {
     /// Sessions for a project, ordered.
     func sessions(forProject path: String) -> [ClaudeSession] {
         (model.sessionsByProject[path] ?? []).sorted { $0.order < $1.order }
+    }
+
+    func session(id: UUID, forProject path: String) -> ClaudeSession? {
+        model.sessionsByProject[path]?.first { $0.id == id }
+    }
+
+    func autoConfirm(forProject path: String) -> Bool {
+        model.autoConfirmByProject[path] ?? false
+    }
+
+    func setAutoConfirm(_ enabled: Bool, forProject path: String) {
+        model.autoConfirmByProject[path] = enabled
+        persist()
     }
 
     /// Sessions for a project, creating one default session if none exist yet.

@@ -67,8 +67,9 @@ struct ClaudeSession: Codable, Identifiable, Equatable {
     ///                            CREATES it with the SAME stable id
     /// The id is a stored constant, so the fallback never spawns a new random
     /// session — it always reuses this session's id. Drops to a login shell on exit.
-    var launchCommand: String {
-        let claude = "claude --resume \(claudeSessionId) || claude --session-id \(claudeSessionId)"
+    func launchCommand(autoConfirm: Bool) -> String {
+        let flag = autoConfirm ? "--dangerously-skip-permissions " : ""
+        let claude = "claude \(flag)--resume \(claudeSessionId) || claude \(flag)--session-id \(claudeSessionId)"
         return "(\(claude)); exec \"$0\" -l"
     }
 }
