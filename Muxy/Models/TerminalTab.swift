@@ -74,6 +74,7 @@ final class TerminalTab: Identifiable {
     }
 
     let id: UUID
+    let claudeSessionID: UUID?
     var customTitle: String?
     var colorID: String?
     var isPinned: Bool = false
@@ -101,38 +102,45 @@ final class TerminalTab: Identifiable {
         }
     }
 
-    init(pane: TerminalPaneState) {
+    init(pane: TerminalPaneState, claudeSessionID: UUID? = nil) {
         id = UUID()
+        self.claudeSessionID = claudeSessionID
         content = .terminal(pane)
     }
 
     init(vcsState: VCSTabState) {
         id = UUID()
+        claudeSessionID = nil
         content = .vcs(vcsState)
     }
 
     init(editorState: EditorTabState) {
         id = UUID()
+        claudeSessionID = nil
         content = .editor(editorState)
     }
 
     init(diffViewerState: DiffViewerTabState) {
         id = UUID()
+        claudeSessionID = nil
         content = .diffViewer(diffViewerState)
     }
 
     init(imageViewerState: ImageViewerTabState) {
         id = UUID()
+        claudeSessionID = nil
         content = .imageViewer(imageViewerState)
     }
 
     init(extensionState: ExtensionTabState) {
         id = UUID()
+        claudeSessionID = nil
         content = .extensionWebView(extensionState)
     }
 
     init(restoring snapshot: TerminalTabSnapshot, restoredSession: TerminalSessionSnapshot? = nil) {
         id = snapshot.id
+        claudeSessionID = snapshot.claudeSessionID
         customTitle = snapshot.customTitle
         colorID = snapshot.colorID
         isPinned = snapshot.isPinned
@@ -194,6 +202,7 @@ final class TerminalTab: Identifiable {
         TerminalTabSnapshot(
             kind: content.kind,
             id: id,
+            claudeSessionID: claudeSessionID,
             customTitle: customTitle,
             colorID: colorID,
             isPinned: isPinned,

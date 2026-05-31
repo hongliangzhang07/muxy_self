@@ -167,7 +167,7 @@ final class RemoteServerDelegate: MuxyRemoteServerDelegate {
     }
 
     func closeTab(projectID: UUID, areaID: UUID, tabID: UUID) {
-        appState.forceCloseTab(tabID, areaID: areaID, projectID: projectID)
+        appState.forceCloseTab(tabID, areaID: areaID, projectID: projectID, explicit: true)
     }
 
     func selectTab(projectID: UUID, areaID: UUID, tabID: UUID) {

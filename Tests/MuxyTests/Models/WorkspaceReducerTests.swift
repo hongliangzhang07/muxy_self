@@ -44,6 +44,16 @@ struct WorkspaceReducerTests {
         DiffCache.LoadedDiff(rows: [], additions: 1, deletions: 0, truncated: false)
     }
 
+    private func withIsolatedSessionPath(_ body: (String) -> Void) {
+        let path = "/tmp/muxy-session-\(UUID().uuidString)"
+        defer {
+            for session in ClaudeSessionStore.shared.sessions(forProject: path) {
+                ClaudeSessionStore.shared.removeSession(sessionID: session.id, forProject: path)
+            }
+        }
+        body(path)
+    }
+
     @Test("selectProject creates workspace if new")
     func selectProjectNew() {
         let projectID = UUID()
@@ -253,11 +263,82 @@ struct WorkspaceReducerTests {
         let firstTabID = area.tabs[0].id
 
         let effects = WorkspaceReducer.reduce(
-            action: .closeTab(projectID: projectID, areaID: areaID, tabID: firstTabID),
+            action: .closeTab(projectID: projectID, areaID: areaID, tabID: firstTabID, explicit: true),
             state: &state
         )
         #expect(area.tabs.count == 1)
         #expect(!effects.paneIDsToRemove.isEmpty)
+    }
+
+    @Test("explicit closeTab discards the bound Claude session")
+    func closeTabExplicitDiscardsClaudeSession() {
+        withIsolatedSessionPath { path in
+            let projectID = UUID()
+            let worktreeID = UUID()
+            var state = makeState(projectID: projectID, worktreeID: worktreeID, worktreePath: path)
+            let key = WorktreeKey(projectID: projectID, worktreeID: worktreeID)
+            let areaID = state.focusedAreaID[key]!
+            let area = area(in: state, key: key, areaID: areaID)!
+            let sessionID = area.tabs[0].claudeSessionID!
+            let closingTabID = area.tabs[0].id
+
+            _ = WorkspaceReducer.reduce(action: .createTab(projectID: projectID, areaID: areaID), state: &state)
+            #expect(ClaudeSessionStore.shared.sessions(forProject: path).contains { $0.id == sessionID })
+
+            _ = WorkspaceReducer.reduce(
+                action: .closeTab(projectID: projectID, areaID: areaID, tabID: closingTabID, explicit: true),
+                state: &state
+            )
+
+            #expect(!ClaudeSessionStore.shared.sessions(forProject: path).contains { $0.id == sessionID })
+        }
+    }
+
+    @Test("non-explicit closeTab keeps the bound Claude session")
+    func closeTabNonExplicitKeepsClaudeSession() {
+        withIsolatedSessionPath { path in
+            let projectID = UUID()
+            let worktreeID = UUID()
+            var state = makeState(projectID: projectID, worktreeID: worktreeID, worktreePath: path)
+            let key = WorktreeKey(projectID: projectID, worktreeID: worktreeID)
+            let areaID = state.focusedAreaID[key]!
+            let area = area(in: state, key: key, areaID: areaID)!
+            let sessionID = area.tabs[0].claudeSessionID!
+            let closingTabID = area.tabs[0].id
+
+            _ = WorkspaceReducer.reduce(action: .createTab(projectID: projectID, areaID: areaID), state: &state)
+
+            _ = WorkspaceReducer.reduce(
+                action: .closeTab(projectID: projectID, areaID: areaID, tabID: closingTabID, explicit: false),
+                state: &state
+            )
+
+            #expect(ClaudeSessionStore.shared.sessions(forProject: path).contains { $0.id == sessionID })
+        }
+    }
+
+    @Test("pinned tab close keeps its Claude session")
+    func closeTabPinnedKeepsClaudeSession() {
+        withIsolatedSessionPath { path in
+            let projectID = UUID()
+            let worktreeID = UUID()
+            var state = makeState(projectID: projectID, worktreeID: worktreeID, worktreePath: path)
+            let key = WorktreeKey(projectID: projectID, worktreeID: worktreeID)
+            let areaID = state.focusedAreaID[key]!
+            let area = area(in: state, key: key, areaID: areaID)!
+            _ = WorkspaceReducer.reduce(action: .createTab(projectID: projectID, areaID: areaID), state: &state)
+            let pinnedTab = area.tabs[0]
+            let sessionID = pinnedTab.claudeSessionID!
+            area.togglePin(pinnedTab.id)
+
+            _ = WorkspaceReducer.reduce(
+                action: .closeTab(projectID: projectID, areaID: areaID, tabID: pinnedTab.id, explicit: true),
+                state: &state
+            )
+
+            #expect(area.tabs.contains { $0.id == pinnedTab.id })
+            #expect(ClaudeSessionStore.shared.sessions(forProject: path).contains { $0.id == sessionID })
+        }
     }
 
     @Test("closeTab last tab in multi-area closes area instead")
@@ -282,7 +363,7 @@ struct WorkspaceReducerTests {
         let tabID = firstArea.tabs[0].id
 
         let effects = WorkspaceReducer.reduce(
-            action: .closeTab(projectID: projectID, areaID: firstAreaID, tabID: tabID),
+            action: .closeTab(projectID: projectID, areaID: firstAreaID, tabID: tabID, explicit: true),
             state: &state
         )
 
@@ -301,7 +382,7 @@ struct WorkspaceReducerTests {
         let tabID = area.tabs[0].id
 
         let effects = WorkspaceReducer.reduce(
-            action: .closeTab(projectID: projectID, areaID: areaID, tabID: tabID),
+            action: .closeTab(projectID: projectID, areaID: areaID, tabID: tabID, explicit: true),
             state: &state
         )
 
@@ -333,7 +414,7 @@ struct WorkspaceReducerTests {
         let tabID = area.activeTabID!
 
         _ = WorkspaceReducer.reduce(
-            action: .closeTab(projectID: projectID, areaID: areaID, tabID: tabID),
+            action: .closeTab(projectID: projectID, areaID: areaID, tabID: tabID, explicit: true),
             state: &state
         )
 

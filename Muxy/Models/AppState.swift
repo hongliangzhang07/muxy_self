@@ -49,7 +49,7 @@ final class AppState {
         case createImageViewerTab(projectID: UUID, areaID: UUID?, filePath: String)
         case createExtensionTab(projectID: UUID, areaID: UUID?, request: CreateExtensionTabRequest)
         case restoreClosedTerminalTab(projectID: UUID, areaID: UUID?, snapshot: ClosedTerminalTabSnapshot)
-        case closeTab(projectID: UUID, areaID: UUID, tabID: UUID)
+        case closeTab(projectID: UUID, areaID: UUID, tabID: UUID, explicit: Bool)
         case selectTab(projectID: UUID, areaID: UUID, tabID: UUID)
         case selectTabByIndex(projectID: UUID, index: Int)
         case selectNextTab(projectID: UUID)
@@ -527,10 +527,10 @@ final class AppState {
         closeTabWithLastCheck(tabID, areaID: areaID, projectID: projectID)
     }
 
-    func forceCloseTab(_ tabID: UUID, areaID: UUID, projectID: UUID) {
+    func forceCloseTab(_ tabID: UUID, areaID: UUID, projectID: UUID, explicit: Bool = false) {
         clearPendingProcessCloseIfMatching(tabID: tabID, areaID: areaID, projectID: projectID)
         unpinTabIfNeeded(tabID, areaID: areaID, projectID: projectID)
-        closeAndRecordTerminalTab(tabID, areaID: areaID, projectID: projectID)
+        closeAndRecordTerminalTab(tabID, areaID: areaID, projectID: projectID, explicit: explicit)
     }
 
     func confirmCloseRunningTab() {
@@ -593,13 +593,13 @@ final class AppState {
             pendingLastTabClose = PendingTabClose(projectID: projectID, areaID: areaID, tabID: tabID)
             return
         }
-        closeAndRecordTerminalTab(tabID, areaID: areaID, projectID: projectID)
+        closeAndRecordTerminalTab(tabID, areaID: areaID, projectID: projectID, explicit: true)
     }
 
     func confirmCloseLastTab() {
         guard let pending = pendingLastTabClose else { return }
         pendingLastTabClose = nil
-        closeAndRecordTerminalTab(pending.tabID, areaID: pending.areaID, projectID: pending.projectID)
+        closeAndRecordTerminalTab(pending.tabID, areaID: pending.areaID, projectID: pending.projectID, explicit: true)
     }
 
     func cancelCloseLastTab() {
@@ -712,9 +712,9 @@ final class AppState {
         )
     }
 
-    private func closeAndRecordTerminalTab(_ tabID: UUID, areaID: UUID, projectID: UUID) {
+    private func closeAndRecordTerminalTab(_ tabID: UUID, areaID: UUID, projectID: UUID, explicit: Bool) {
         let closedSnapshot = closedTerminalTabSnapshot(tabID: tabID, areaID: areaID, projectID: projectID)
-        dispatch(.closeTab(projectID: projectID, areaID: areaID, tabID: tabID))
+        dispatch(.closeTab(projectID: projectID, areaID: areaID, tabID: tabID, explicit: explicit))
         if let closedSnapshot {
             terminalSessions.recordClosedTerminalTab(closedSnapshot, workspaceRoots: workspaceRoots)
         } else {

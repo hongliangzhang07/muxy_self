@@ -9,22 +9,13 @@ final class TabArea: Identifiable {
     var activeTabID: UUID?
     private var tabHistory: [UUID] = []
 
-    // Muxy fork (CCH parity): build a terminal tab bound to a persistent Claude
-    // session. First open of a session CREATES its conversation (`--session-id`);
-    // every later open RESUMES it (`--resume`), tracked via the session's
-    // `hasLaunched` flag in ClaudeSessionStore — exactly like CCH's `isResume`.
-    private static func makeTab(for session: ClaudeSession, store: ClaudeSessionStore) -> TerminalTab {
-        // The startupCommand is self-healing (resume-or-create with a stable id) and
-        // is only EXECUTED lazily — when this tab is first rendered/clicked, not at
-        // app launch (see PaneNode: only the active tab's TerminalPane is created).
-        // So building tabs for all sessions here does NOT spawn Claude for any of
-        // them; each conversation starts only when its tab is actually shown.
+    private static func makeTab(for session: ClaudeSession) -> TerminalTab {
         let pane = TerminalPaneState(
             projectPath: session.projectPath,
             startupCommand: session.launchCommand,
             startupCommandInteractive: true
         )
-        let tab = TerminalTab(pane: pane)
+        let tab = TerminalTab(pane: pane, claudeSessionID: session.id)
         tab.customTitle = session.name
         return tab
     }
@@ -32,11 +23,9 @@ final class TabArea: Identifiable {
     init(projectPath: String) {
         id = UUID()
         self.projectPath = projectPath
-        // Rebuild the project's PERSISTED Claude session list as tabs (survives
-        // project close/reopen + app restart). A brand-new project gets one default.
         let store = ClaudeSessionStore.shared
         for session in store.sessionsEnsuringDefault(forProject: projectPath) {
-            tabs.append(Self.makeTab(for: session, store: store))
+            tabs.append(Self.makeTab(for: session))
         }
         activeTabID = tabs.first?.id
     }
@@ -56,12 +45,8 @@ final class TabArea: Identifiable {
             tabs.append(tab)
             activeTabID = tab.id
         } else {
-            // Muxy fork (CCH parity): a split with no explicit command = a new
-            // persistent Claude session, same as a new tab. Keeps split panes
-            // consistent with tabs (each is its own resumable conversation).
-            let store = ClaudeSessionStore.shared
-            let session = store.addSession(forProject: projectPath)
-            let tab = Self.makeTab(for: session, store: store)
+            let session = ClaudeSessionStore.shared.addSession(forProject: projectPath)
+            let tab = Self.makeTab(for: session)
             tabs.append(tab)
             activeTabID = tab.id
         }
@@ -111,19 +96,13 @@ final class TabArea: Identifiable {
     }
 
     func createTab() {
-        // Muxy fork (CCH parity): a new tab = a new persistent Claude session.
-        let store = ClaudeSessionStore.shared
-        let session = store.addSession(forProject: projectPath)
-        insertTab(Self.makeTab(for: session, store: store))
+        let session = ClaudeSessionStore.shared.addSession(forProject: projectPath)
+        insertTab(Self.makeTab(for: session))
     }
 
-    func createTab(inDirectory directory: String) {
-        // Muxy fork: the session always belongs to THIS project (self.projectPath);
-        // `directory` only changes the terminal's initial working dir. Using directory
-        // as the project key would create orphan sessions under inconsistent paths.
-        let store = ClaudeSessionStore.shared
-        let session = store.addSession(forProject: projectPath)
-        insertTab(Self.makeTab(for: session, store: store))
+    func createTab(inDirectory _: String) {
+        let session = ClaudeSessionStore.shared.addSession(forProject: projectPath)
+        insertTab(Self.makeTab(for: session))
     }
 
     func createCommandTab(name: String, command: String, closesOnCommandExit: Bool = true) {

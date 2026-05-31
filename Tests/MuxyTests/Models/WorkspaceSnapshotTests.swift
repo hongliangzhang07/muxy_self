@@ -65,6 +65,39 @@ struct WorkspaceSnapshotTests {
         #expect(decoded.projectPath == testPath)
     }
 
+    @Test("TerminalTabSnapshot round-trip preserves claudeSessionID")
+    func terminalTabSnapshotPreservesClaudeSessionID() throws {
+        let sessionID = UUID()
+        let snapshot = TerminalTabSnapshot(
+            kind: .terminal,
+            claudeSessionID: sessionID,
+            customTitle: nil,
+            colorID: nil,
+            isPinned: false,
+            projectPath: testPath,
+            paneTitle: "Shell"
+        )
+        let data = try JSONEncoder().encode(snapshot)
+        let decoded = try JSONDecoder().decode(TerminalTabSnapshot.self, from: data)
+
+        #expect(decoded.claudeSessionID == sessionID)
+    }
+
+    @Test("TerminalTabSnapshot decoding without claudeSessionID defaults to nil")
+    func terminalTabSnapshotClaudeSessionIDBackwardCompatibility() throws {
+        let json = """
+        {
+            "kind": "terminal",
+            "isPinned": false,
+            "projectPath": "\(testPath)",
+            "paneTitle": "Shell"
+        }
+        """.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(TerminalTabSnapshot.self, from: json)
+
+        #expect(decoded.claudeSessionID == nil)
+    }
+
     @Test("TerminalTabSnapshot Codable round-trip for editor")
     func editorTabSnapshotRoundTrip() throws {
         let snapshot = TerminalTabSnapshot(

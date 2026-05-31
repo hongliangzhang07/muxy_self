@@ -193,28 +193,39 @@ enum TabReducer {
         area.selectPreviousTab()
     }
 
+    struct CloseTabRequest {
+        let tabID: UUID
+        let areaID: UUID
+        let explicit: Bool
+    }
+
     static func closeTab(
-        _ tabID: UUID,
-        areaID: UUID,
+        _ request: CloseTabRequest,
         key: WorktreeKey,
         state: inout WorkspaceState,
         effects: inout WorkspaceSideEffects
     ) {
+        let tabID = request.tabID
+        let areaID = request.areaID
         guard let root = state.workspaceRoots[key],
               let area = root.findArea(id: areaID)
         else { return }
+
+        let tab = area.tabs.first { $0.id == tabID }
+        let sessionIDToDiscard = request.explicit && tab?.isPinned != true ? tab?.claudeSessionID : nil
 
         let areaCount = root.allAreas().count
         if area.tabs.count <= 1, areaCount > 1 {
             clearDiffViewerCaches(in: area)
             SplitReducer.closeArea(areaID, key: key, state: &state, effects: &effects)
+            discardClaudeSession(sessionIDToDiscard, projectPath: area.projectPath)
             return
         }
 
-        let tab = area.tabs.first { $0.id == tabID }
         if let paneID = area.closeTab(tabID) {
             effects.paneIDsToRemove.append(paneID)
         }
+        discardClaudeSession(sessionIDToDiscard, projectPath: area.projectPath)
         clearDiffViewerCache(for: tab)
 
         guard area.tabs.isEmpty else { return }
@@ -224,6 +235,11 @@ enum TabReducer {
             state: &state,
             effects: &effects
         )
+    }
+
+    private static func discardClaudeSession(_ sessionID: UUID?, projectPath: String) {
+        guard let sessionID else { return }
+        ClaudeSessionStore.shared.removeSession(sessionID: sessionID, forProject: projectPath)
     }
 
     private static func clearDiffViewerCaches(in area: TabArea) {

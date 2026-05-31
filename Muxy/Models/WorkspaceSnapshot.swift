@@ -100,6 +100,7 @@ struct TabAreaSnapshot: Codable {
 struct TerminalTabSnapshot: Codable {
     let kind: TerminalTab.Kind
     let id: UUID
+    let claudeSessionID: UUID?
     let customTitle: String?
     let colorID: String?
     let isPinned: Bool
@@ -115,6 +116,7 @@ struct TerminalTabSnapshot: Codable {
     init(
         kind: TerminalTab.Kind,
         id: UUID = UUID(),
+        claudeSessionID: UUID? = nil,
         customTitle: String?,
         colorID: String?,
         isPinned: Bool,
@@ -129,6 +131,7 @@ struct TerminalTabSnapshot: Codable {
     ) {
         self.kind = kind
         self.id = id
+        self.claudeSessionID = claudeSessionID
         self.customTitle = customTitle
         self.colorID = colorID
         self.isPinned = isPinned
@@ -145,6 +148,7 @@ struct TerminalTabSnapshot: Codable {
     private enum CodingKeys: String, CodingKey {
         case kind
         case id
+        case claudeSessionID
         case customTitle
         case colorID
         case isPinned
@@ -162,6 +166,7 @@ struct TerminalTabSnapshot: Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         kind = try container.decodeIfPresent(TerminalTab.Kind.self, forKey: .kind) ?? .terminal
         id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        claudeSessionID = try container.decodeIfPresent(UUID.self, forKey: .claudeSessionID)
         customTitle = try container.decodeIfPresent(String.self, forKey: .customTitle)
         colorID = try container.decodeIfPresent(String.self, forKey: .colorID)
         isPinned = try container.decode(Bool.self, forKey: .isPinned)
