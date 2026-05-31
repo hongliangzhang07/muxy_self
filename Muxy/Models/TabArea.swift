@@ -1,0 +1,369 @@
+import Foundation
+
+@MainActor
+@Observable
+final class TabArea: Identifiable {
+    let id: UUID
+    let projectPath: String
+    var tabs: [TerminalTab] = []
+    var activeTabID: UUID?
+    private var tabHistory: [UUID] = []
+
+    // Muxy fork (CCH parity): build a terminal tab bound to a persistent Claude
+    // session. First open of a session CREATES its conversation (`--session-id`);
+    // every later open RESUMES it (`--resume`), tracked via the session's
+    // `hasLaunched` flag in ClaudeSessionStore — exactly like CCH's `isResume`.
+    private static func makeTab(for session: ClaudeSession, store: ClaudeSessionStore) -> TerminalTab {
+        // The startupCommand is self-healing (resume-or-create with a stable id) and
+        // is only EXECUTED lazily — when this tab is first rendered/clicked, not at
+        // app launch (see PaneNode: only the active tab's TerminalPane is created).
+        // So building tabs for all sessions here does NOT spawn Claude for any of
+        // them; each conversation starts only when its tab is actually shown.
+        let pane = TerminalPaneState(
+            projectPath: session.projectPath,
+            startupCommand: session.launchCommand,
+            startupCommandInteractive: true
+        )
+        let tab = TerminalTab(pane: pane)
+        tab.customTitle = session.name
+        return tab
+    }
+
+    init(projectPath: String) {
+        id = UUID()
+        self.projectPath = projectPath
+        // Rebuild the project's PERSISTED Claude session list as tabs (survives
+        // project close/reopen + app restart). A brand-new project gets one default.
+        let store = ClaudeSessionStore.shared
+        for session in store.sessionsEnsuringDefault(forProject: projectPath) {
+            tabs.append(Self.makeTab(for: session, store: store))
+        }
+        activeTabID = tabs.first?.id
+    }
+
+    init(projectPath: String, command: String?) {
+        id = UUID()
+        self.projectPath = projectPath
+        if let command {
+            // Explicit command (e.g. a specific tool) — run it verbatim.
+            let wrappedCommand = "(\(command)); exec \"$0\" -l"
+            let pane = TerminalPaneState(
+                projectPath: projectPath,
+                startupCommand: wrappedCommand,
+                startupCommandInteractive: true
+            )
+            let tab = TerminalTab(pane: pane)
+            tabs.append(tab)
+            activeTabID = tab.id
+        } else {
+            // Muxy fork (CCH parity): a split with no explicit command = a new
+            // persistent Claude session, same as a new tab. Keeps split panes
+            // consistent with tabs (each is its own resumable conversation).
+            let store = ClaudeSessionStore.shared
+            let session = store.addSession(forProject: projectPath)
+            let tab = Self.makeTab(for: session, store: store)
+            tabs.append(tab)
+            activeTabID = tab.id
+        }
+    }
+
+    init(projectPath: String, existingTab tab: TerminalTab) {
+        id = UUID()
+        self.projectPath = projectPath
+        tabs.append(tab)
+        activeTabID = tab.id
+    }
+
+    init(restoring snapshot: TabAreaSnapshot, sessionsByPaneID: [UUID: TerminalSessionSnapshot] = [:]) {
+        id = snapshot.id
+        projectPath = snapshot.projectPath
+        tabs = snapshot.tabs.map { tabSnapshot in
+            TerminalTab(
+                restoring: tabSnapshot,
+                restoredSession: tabSnapshot.paneID.flatMap { sessionsByPaneID[$0] }
+            )
+        }
+        if let index = snapshot.activeTabIndex, index >= 0, index < tabs.count {
+            activeTabID = tabs[index].id
+        } else {
+            activeTabID = tabs.first?.id
+        }
+    }
+
+    func snapshot() -> TabAreaSnapshot {
+        let persistedTabs = tabs.filter { $0.kind != .diffViewer }
+        let activeIndex = persistedTabs.firstIndex(where: { $0.id == activeTabID })
+        return TabAreaSnapshot(
+            id: id,
+            projectPath: projectPath,
+            tabs: persistedTabs.map { $0.snapshot() },
+            activeTabIndex: activeIndex
+        )
+    }
+
+    var activeTab: TerminalTab? {
+        guard let activeTabID else { return nil }
+        return tabs.first { $0.id == activeTabID }
+    }
+
+    private var firstUnpinnedIndex: Int {
+        tabs.firstIndex(where: { !$0.isPinned }) ?? tabs.count
+    }
+
+    func createTab() {
+        // Muxy fork (CCH parity): a new tab = a new persistent Claude session.
+        let store = ClaudeSessionStore.shared
+        let session = store.addSession(forProject: projectPath)
+        insertTab(Self.makeTab(for: session, store: store))
+    }
+
+    func createTab(inDirectory directory: String) {
+        // Muxy fork: the session always belongs to THIS project (self.projectPath);
+        // `directory` only changes the terminal's initial working dir. Using directory
+        // as the project key would create orphan sessions under inconsistent paths.
+        let store = ClaudeSessionStore.shared
+        let session = store.addSession(forProject: projectPath)
+        insertTab(Self.makeTab(for: session, store: store))
+    }
+
+    func createCommandTab(name: String, command: String, closesOnCommandExit: Bool = true) {
+        let trimmedCommand = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedCommand.isEmpty else { return }
+        let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pane = TerminalPaneState(
+            projectPath: projectPath,
+            title: title.isEmpty ? Self.commandTitle(trimmedCommand) : title,
+            startupCommand: trimmedCommand,
+            startupCommandInteractive: true,
+            closesOnStartupCommandExit: closesOnCommandExit
+        )
+        insertTab(TerminalTab(pane: pane))
+    }
+
+    func restoreClosedTerminalTab(_ snapshot: ClosedTerminalTabSnapshot) {
+        let command = snapshot.commandToRestore
+        let safeCommand = command.flatMap { TerminalSessionRestorePolicy.isSafeToRestore($0) ? $0 : nil }
+        let pane = TerminalPaneState(
+            projectPath: snapshot.projectPath,
+            title: snapshot.title,
+            initialWorkingDirectory: snapshot.workingDirectory,
+            startupCommand: safeCommand,
+            startupCommandInteractive: safeCommand != nil
+        )
+        let tab = TerminalTab(pane: pane)
+        tab.customTitle = snapshot.customTitle
+        tab.colorID = snapshot.colorID
+        insertTab(tab)
+    }
+
+    func createVCSTab() {
+        insertTab(TerminalTab(vcsState: VCSStateStore.shared.state(for: projectPath)))
+    }
+
+    func createEditorTab(filePath: String, suppressInitialFocus: Bool = false) {
+        if let existing = tabs.first(where: { $0.content.editorState?.filePath == filePath }) {
+            selectTab(existing.id)
+            return
+        }
+        let editorState = EditorTabState(
+            projectPath: projectPath,
+            filePath: filePath,
+            defaultHTMLViewMode: EditorSettings.shared.htmlDefaultViewMode
+        )
+        editorState.suppressInitialFocus = suppressInitialFocus
+        insertTab(TerminalTab(editorState: editorState))
+    }
+
+    func createDiffViewerTab(
+        vcs: VCSTabState,
+        filePath: String?,
+        isStaged: Bool,
+        source: DiffViewerTabState.Source = .workingTree
+    ) {
+        if let existing = tabs.first(where: { tab in
+            tab.content.diffViewerState != nil
+        }) {
+            existing.content.diffViewerState?.setSource(source, filePath: filePath, isStaged: isStaged)
+            if let filePath {
+                existing.content.diffViewerState?.select(filePath: filePath, isStaged: isStaged)
+            }
+            selectTab(existing.id)
+            return
+        }
+        insertTab(TerminalTab(diffViewerState: DiffViewerTabState(
+            vcs: vcs,
+            filePath: filePath,
+            isStaged: isStaged,
+            source: source
+        )))
+    }
+
+    func createImageViewerTab(filePath: String) {
+        if let existing = tabs.first(where: { $0.content.imageViewerState?.filePath == filePath }) {
+            selectTab(existing.id)
+            return
+        }
+        insertTab(TerminalTab(imageViewerState: ImageViewerTabState(
+            projectPath: projectPath,
+            filePath: filePath
+        )))
+    }
+
+    func createExtensionTab(extensionID: String, tabTypeID: String, title: String, data: ExtensionJSON?) {
+        let state = ExtensionTabState(
+            extensionID: extensionID,
+            tabTypeID: tabTypeID,
+            projectPath: projectPath,
+            defaultTitle: title,
+            initialData: data
+        )
+        insertTab(TerminalTab(extensionState: state))
+    }
+
+    func createExternalEditorTab(filePath: String, command: String) {
+        if let existing = tabs.first(where: { $0.content.pane?.externalEditorFilePath == filePath }) {
+            selectTab(existing.id)
+            return
+        }
+        let title = "\(Self.commandTitle(command)) \(URL(fileURLWithPath: filePath).lastPathComponent)"
+        let pane = TerminalPaneState(
+            projectPath: projectPath,
+            title: title,
+            startupCommand: Self.editorLaunchCommand(command: command, filePath: filePath),
+            startupCommandInteractive: true,
+            externalEditorFilePath: filePath
+        )
+        insertTab(TerminalTab(pane: pane))
+    }
+
+    static func editorLaunchCommand(command: String, filePath: String) -> String {
+        if command.contains("{file}") {
+            return command.replacingOccurrences(of: "{file}", with: filePath)
+        }
+        return command + " " + shellEscapedPath(filePath)
+    }
+
+    private static func commandTitle(_ command: String) -> String {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = trimmed.split(separator: " ").first else { return "Editor" }
+        return String(first)
+    }
+
+    private static func shellEscapedPath(_ path: String) -> String {
+        let needsQuoting = path.contains { character in
+            character.isWhitespace || "'\"\\&|;$`!()[]{}<>*?".contains(character)
+        }
+        guard needsQuoting else { return path }
+        return "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    private func insertTab(_ tab: TerminalTab) {
+        tabs.append(tab)
+        if let current = activeTabID {
+            tabHistory.append(current)
+        }
+        activeTabID = tab.id
+    }
+
+    enum InsertSide { case left, right }
+
+    func createTabAdjacent(to tabID: UUID, side: InsertSide) {
+        guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return }
+        let tab = TerminalTab(pane: TerminalPaneState(projectPath: projectPath))
+        let desiredIndex = side == .left ? index : index + 1
+        let insertIndex = max(desiredIndex, firstUnpinnedIndex)
+        tabs.insert(tab, at: insertIndex)
+        if let current = activeTabID {
+            tabHistory.append(current)
+        }
+        activeTabID = tab.id
+    }
+
+    func closeTab(_ tabID: UUID) -> UUID? {
+        guard let tab = removeTab(tabID) else { return nil }
+        return tab.content.pane?.id
+    }
+
+    func selectTab(_ tabID: UUID) {
+        guard activeTabID != tabID else { return }
+        if let current = activeTabID, current != tabID {
+            tabHistory.append(current)
+        }
+        activeTabID = tabID
+    }
+
+    func selectTabByIndex(_ index: Int) {
+        guard index >= 0, index < tabs.count else { return }
+        selectTab(tabs[index].id)
+    }
+
+    func selectNextTab() {
+        guard tabs.count > 1, let activeTabID,
+              let index = tabs.firstIndex(where: { $0.id == activeTabID })
+        else { return }
+        let next = (index + 1) % tabs.count
+        selectTab(tabs[next].id)
+    }
+
+    func selectPreviousTab() {
+        guard tabs.count > 1, let activeTabID,
+              let index = tabs.firstIndex(where: { $0.id == activeTabID })
+        else { return }
+        let previous = (index - 1 + tabs.count) % tabs.count
+        selectTab(tabs[previous].id)
+    }
+
+    func reorderTab(fromOffsets source: IndexSet, toOffset destination: Int) {
+        tabs.move(fromOffsets: source, toOffset: destination)
+    }
+
+    func removeTab(_ tabID: UUID) -> TerminalTab? {
+        guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return nil }
+        let tab = tabs[index]
+        guard !tab.isPinned else { return nil }
+        tabs.remove(at: index)
+        tabHistory.removeAll { $0 == tabID }
+        guard activeTabID == tabID else { return tab }
+        let validIDs = Set(tabs.map(\.id))
+        while let prev = tabHistory.popLast() {
+            if validIDs.contains(prev) {
+                activeTabID = prev
+                return tab
+            }
+        }
+        activeTabID = tabs.last?.id
+        return tab
+    }
+
+    func insertExistingTab(_ tab: TerminalTab) {
+        let insertIndex = tab.isPinned ? firstUnpinnedIndex : tabs.count
+        tabs.insert(tab, at: insertIndex)
+        if let current = activeTabID {
+            tabHistory.append(current)
+        }
+        activeTabID = tab.id
+    }
+
+    func setCustomTitle(_ tabID: UUID, title: String?) {
+        guard let tab = tabs.first(where: { $0.id == tabID }) else { return }
+        tab.customTitle = title
+    }
+
+    func setColorID(_ tabID: UUID, colorID: String?) {
+        guard let tab = tabs.first(where: { $0.id == tabID }) else { return }
+        tab.colorID = colorID
+    }
+
+    func togglePin(_ tabID: UUID) {
+        guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return }
+        let tab = tabs[index]
+        tab.isPinned.toggle()
+        tabs.remove(at: index)
+        if tab.isPinned {
+            tabs.insert(tab, at: firstUnpinnedIndex)
+        } else {
+            let insertIndex = max(firstUnpinnedIndex, 0)
+            tabs.insert(tab, at: insertIndex)
+        }
+    }
+}

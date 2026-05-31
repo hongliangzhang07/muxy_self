@@ -1,0 +1,107 @@
+// swift-tools-version: 6.0
+
+import PackageDescription
+
+let package = Package(
+    name: "Muxy",
+    platforms: [
+        .macOS(.v14),
+    ],
+    products: [
+        .library(name: "MuxyShared", targets: ["MuxyShared"]),
+    ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.1"),
+        .package(url: "https://github.com/jpsim/Yams", from: "5.1.0"),
+        .package(url: "https://github.com/getsentry/sentry-cocoa", from: "8.40.0"),
+    ],
+    targets: [
+        .target(
+            name: "MuxyShared",
+            path: "MuxyShared"
+        ),
+        .target(
+            name: "GhosttyKit",
+            path: "GhosttyKit",
+            publicHeadersPath: "."
+        ),
+        .target(
+            name: "MuxyServer",
+            dependencies: [
+                "MuxyShared",
+            ],
+            path: "MuxyServer"
+        ),
+        .executableTarget(
+            name: "Muxy",
+            dependencies: [
+                "GhosttyKit",
+                "MuxyShared",
+                "MuxyServer",
+                .product(name: "Sparkle", package: "Sparkle"),
+                .product(name: "Yams", package: "Yams"),
+                .product(name: "Sentry", package: "sentry-cocoa"),
+            ],
+            path: "Muxy",
+            exclude: ["Info.plist", "Muxy.entitlements"],
+            resources: [
+                .process("Resources/Assets.xcassets"),
+                .copy("Resources/ghostty"),
+                .copy("Resources/markdown-assets"),
+                .copy("Resources/ProviderIcons"),
+                .copy("Resources/rg"),
+                .copy("Resources/scripts"),
+                .copy("Resources/skills"),
+                .copy("Resources/terminfo"),
+            ],
+            linkerSettings: [
+                .unsafeFlags([
+                    "GhosttyKit.xcframework/macos-arm64_x86_64/ghostty-internal.a",
+                ]),
+                .linkedFramework("AppKit"),
+                .linkedFramework("AVFoundation"),
+                .linkedFramework("Carbon"),
+                .linkedFramework("CoreAudio"),
+                .linkedFramework("CoreGraphics"),
+                .linkedFramework("CoreText"),
+                .linkedFramework("Foundation"),
+                .linkedFramework("IOKit"),
+                .linkedFramework("Metal"),
+                .linkedFramework("MetalKit"),
+                .linkedFramework("QuartzCore"),
+                .linkedFramework("Speech"),
+                .linkedFramework("UserNotifications"),
+                .linkedLibrary("c++"),
+            ]
+        ),
+        .testTarget(
+            name: "MuxyTests",
+            dependencies: [
+                "Muxy",
+                "MuxyShared",
+                "MuxyServer",
+                .product(name: "Yams", package: "Yams"),
+            ],
+            path: "Tests/MuxyTests",
+            linkerSettings: [
+                .unsafeFlags([
+                    "GhosttyKit.xcframework/macos-arm64_x86_64/ghostty-internal.a",
+                ]),
+                .linkedFramework("AppKit"),
+                .linkedFramework("AVFoundation"),
+                .linkedFramework("Carbon"),
+                .linkedFramework("CoreAudio"),
+                .linkedFramework("CoreGraphics"),
+                .linkedFramework("CoreText"),
+                .linkedFramework("Foundation"),
+                .linkedFramework("IOKit"),
+                .linkedFramework("Metal"),
+                .linkedFramework("MetalKit"),
+                .linkedFramework("QuartzCore"),
+                .linkedFramework("Speech"),
+                .linkedFramework("UserNotifications"),
+                .linkedLibrary("c++"),
+            ]
+        ),
+    ]
+)

@@ -1,0 +1,176 @@
+import Foundation
+import os
+
+private let logger = Logger(subsystem: "app.muxy", category: "AIProviderRegistry")
+
+protocol AIProviderIntegration {
+    var id: String { get }
+    var displayName: String { get }
+    var socketTypeKey: String { get }
+    var iconName: String { get }
+    var executableNames: [String] { get }
+    var hookScriptName: String { get }
+    var hookScriptExtension: String { get }
+
+    func isToolInstalled() -> Bool
+    func install(hookScriptPath: String) throws
+    func uninstall() throws
+}
+
+extension AIProviderIntegration {
+    var hookScriptName: String { "muxy-claude-hook" }
+    var hookScriptExtension: String { "sh" }
+}
+
+extension AIProviderIntegration {
+    var settingsKey: String { NotificationSettings.providerEnabledKey(for: id) }
+
+    var isEnabled: Bool {
+        get { NotificationSettings.providerEnabled(providerID: id) }
+        nonmutating set { UserDefaults.standard.set(newValue, forKey: settingsKey) }
+    }
+
+    func isToolInstalled() -> Bool {
+        let home = NSHomeDirectory()
+        let searchPaths = executableNames.flatMap { name in
+            [
+                "\(home)/.local/bin/\(name)",
+                "/usr/local/bin/\(name)",
+                "/opt/homebrew/bin/\(name)",
+            ]
+        }
+        return searchPaths.contains { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+}
+
+@MainActor
+final class AIProviderRegistry {
+    static let shared = AIProviderRegistry()
+
+    private let claudeCodeProvider = ClaudeCodeProvider()
+    private let openCodeProvider = OpenCodeProvider()
+    private let codexProvider = CodexProvider()
+    private let cursorProvider = CursorProvider()
+    private let droidProvider = DroidProvider()
+    private let piProvider = PiProvider()
+
+    lazy var providers: [AIProviderIntegration] = [
+        claudeCodeProvider,
+        openCodeProvider,
+        codexProvider,
+        cursorProvider,
+        droidProvider,
+        piProvider,
+    ]
+
+    lazy var usageProviders: [any AIUsageProvider] = [
+        claudeCodeProvider,
+        CodexUsageProvider(),
+        CopilotUsageProvider(),
+        CursorUsageProvider(),
+        AmpUsageProvider(),
+        ZaiUsageProvider(),
+        MiniMaxUsageProvider(),
+        KimiUsageProvider(),
+        FactoryUsageProvider(),
+        piProvider,
+    ]
+
+    private init() {}
+
+    func installAll() {
+        #if DEBUG
+        guard ProcessInfo.processInfo.environment["FF_AI_HOOKS"] != nil else {
+            logger.info("Skipping AI hooks install in dev mode (set FF_AI_HOOKS=true to enable)")
+            return
+        }
+        #endif
+
+        for provider in providers {
+            guard provider.isEnabled else {
+                logger.info("\(provider.displayName) is disabled, uninstalling hook if present")
+                do {
+                    try provider.uninstall()
+                } catch {
+                    logger.warning("Failed to uninstall \(provider.displayName): \(error.localizedDescription)")
+                }
+                continue
+            }
+            guard provider.isToolInstalled() else {
+                logger.info("\(provider.displayName) tool not installed, skipping hook install")
+                continue
+            }
+            guard let hookScript = MuxyNotificationHooks
+                .scriptPath(named: provider.hookScriptName, extension: provider.hookScriptExtension)
+            else {
+                logger.warning("Hook script \(provider.hookScriptName) not found in bundle, skipping \(provider.displayName)")
+                continue
+            }
+            do {
+                try provider.install(hookScriptPath: hookScript)
+                logger.info("Installed \(provider.displayName) integration")
+            } catch {
+                logger.error("Failed to install \(provider.displayName): \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func forceInstall(_ provider: AIProviderIntegration) {
+        guard let hookScript = MuxyNotificationHooks.scriptPath(named: provider.hookScriptName, extension: provider.hookScriptExtension)
+        else {
+            logger.warning("Hook script \(provider.hookScriptName) not found, cannot force-install \(provider.displayName)")
+            return
+        }
+
+        do {
+            try provider.uninstall()
+            try provider.install(hookScriptPath: hookScript)
+            logger.info("Force-installed \(provider.displayName) integration")
+        } catch {
+            logger.error("Failed to force-install \(provider.displayName): \(error.localizedDescription)")
+        }
+    }
+
+    func uninstallAll() {
+        #if DEBUG
+        guard ProcessInfo.processInfo.environment["FF_AI_HOOKS"] != nil else { return }
+        #endif
+
+        for provider in providers {
+            do {
+                try provider.uninstall()
+            } catch {
+                logger.error("Failed to uninstall \(provider.displayName): \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func notificationSource(for socketType: String) -> MuxyNotification.Source {
+        for provider in providers where provider.socketTypeKey == socketType {
+            return .aiProvider(provider.id)
+        }
+        if let declared = ExtensionStore.shared.declaredAIProvider(for: socketType) {
+            return .aiProvider(declared.extensionID)
+        }
+        return .socket
+    }
+
+    func iconName(for source: MuxyNotification.Source) -> String {
+        switch source {
+        case .osc:
+            return "terminal"
+        case let .aiProvider(id):
+            if let providerIcon = providers.first(where: { $0.id == id })?.iconName {
+                return providerIcon
+            }
+            if let extensionStatus = ExtensionStore.shared.statuses.first(where: { $0.id == id }),
+               let icon = extensionStatus.muxyExtension.manifest.aiProvider?.iconName
+            {
+                return icon
+            }
+            return "sparkles"
+        case .socket:
+            return "network"
+        }
+    }
+}

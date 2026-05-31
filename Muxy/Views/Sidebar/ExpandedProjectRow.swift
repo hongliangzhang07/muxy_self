@@ -1,0 +1,679 @@
+import AppKit
+import MuxyShared
+import SwiftUI
+
+struct ExpandedProjectRow: View {
+    let project: Project
+    let shortcutIndex: Int?
+    let isAnyDragging: Bool
+    let onSelect: () -> Void
+    let onRemove: () -> Void
+    let onRename: (String) -> Void
+    let onSetLogo: (String?) -> Void
+    let onSetIcon: (String?) -> Void
+    let onSetIconColor: (String?) -> Void
+
+    @Environment(AppState.self) private var appState
+    @Environment(WorktreeStore.self) private var worktreeStore
+    @Environment(ProjectGroupStore.self) private var projectGroupStore
+
+    @AppStorage(GeneralSettingsKeys.autoExpandWorktreesOnProjectSwitch)
+    private var autoExpandWorktrees = false
+
+    @State private var hovered = false
+    @State private var isRenaming = false
+    @State private var renameText = ""
+    @State private var isGitRepo = false
+    @State private var isCheckingGitRepo = true
+    @State private var showCreateWorktreeSheet = false
+    @State private var logoCropImage: IdentifiableExpandedImage?
+    @State private var worktreesExpanded = false
+    @State private var isRefreshingWorktrees = false
+    @State private var showColorPicker = false
+    @State private var showSymbolPicker = false
+    @State private var pendingWorktreeRemoval: WorktreeRemovalConfirmation?
+    @State private var removalRequest: WorktreeRemovalRequest?
+
+    private var isActive: Bool {
+        appState.activeProjectID == project.id
+    }
+
+    private var worktrees: [Worktree] {
+        worktreeStore.list(for: project.id)
+    }
+
+    private var activeWorktreeID: UUID? {
+        appState.activeWorktreeID[project.id]
+    }
+
+    private var activeWorktree: Worktree? {
+        worktrees.first { $0.id == activeWorktreeID }
+    }
+
+    private var hasWorktreeUI: Bool {
+        isGitRepo || worktrees.count > 1
+    }
+
+    private var displayLetter: String {
+        String(project.name.prefix(1)).uppercased()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            projectHeader
+            if worktreesExpanded, hasWorktreeUI {
+                worktreeList
+            }
+        }
+        .task(id: project.path) {
+            isCheckingGitRepo = true
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            isGitRepo = await GitWorktreeService.shared.isGitRepository(project.path)
+            isCheckingGitRepo = false
+            if autoExpandWorktrees, isActive, hasWorktreeUI {
+                worktreesExpanded = true
+            }
+        }
+        .onChange(of: isActive) { _, active in
+            guard autoExpandWorktrees, active, hasWorktreeUI else { return }
+            withAnimation(.easeInOut(duration: 0.15)) {
+                worktreesExpanded = true
+            }
+        }
+        .contextMenu {
+            Button("Set Logo...") { pickLogoImage() }
+            if project.logo != nil {
+                Button("Remove Logo") { onSetLogo(nil) }
+            }
+            Button("Set Icon...") { showSymbolPicker = true }
+            if project.icon != nil {
+                Button("Remove Icon") { onSetIcon(nil) }
+            }
+            Button("Set Icon Color...") { showColorPicker = true }
+            if project.iconColor != nil {
+                Button("Reset Icon Color") { onSetIconColor(nil) }
+            }
+            Divider()
+            Button("Rename Project") { startRename() }
+            if isGitRepo {
+                Divider()
+                Button("Refresh Worktrees") { Task { await refreshWorktrees() } }
+                Button("New Worktree…") { showCreateWorktreeSheet = true }
+            } else if isCheckingGitRepo {
+                Divider()
+                Button("Loading Worktrees…") {}
+                    .disabled(true)
+            }
+            if !projectGroupStore.groups.isEmpty {
+                Divider()
+                ProjectGroupMembershipMenu(project: project)
+            }
+            Divider()
+            Button("Remove Project", role: .destructive, action: onRemove)
+        }
+        .sheet(isPresented: $showCreateWorktreeSheet) {
+            CreateWorktreeSheet(project: project) { result in
+                showCreateWorktreeSheet = false
+                handleCreateWorktreeResult(result)
+            }
+        }
+        .sheet(item: $logoCropImage) { item in
+            LogoCropperSheet(
+                sourceImage: item.image,
+                onConfirm: { cropped in
+                    logoCropImage = nil
+                    let logoPath = ProjectLogoStorage.save(
+                        croppedImage: cropped,
+                        forProjectID: project.id
+                    )
+                    onSetLogo(logoPath)
+                },
+                onCancel: { logoCropImage = nil }
+            )
+        }
+        .popover(isPresented: $isRenaming, arrowEdge: .trailing) {
+            ExpandedRenamePopover(
+                text: $renameText,
+                onCommit: { commitRename() },
+                onCancel: { cancelRename() }
+            )
+        }
+        .worktreeRemovalSheet($removalRequest)
+        .popover(isPresented: $showColorPicker, arrowEdge: .trailing) {
+            ProjectIconColorPicker(selectedID: project.iconColor) { id in
+                onSetIconColor(id)
+                showColorPicker = false
+            }
+        }
+        .popover(isPresented: $showSymbolPicker, arrowEdge: .trailing) {
+            SFSymbolPicker(selectedName: project.icon) { name in
+                onSetIcon(name)
+                showSymbolPicker = false
+            }
+        }
+        .alert(
+            pendingWorktreeRemoval?.title ?? "",
+            isPresented: worktreeRemovalAlertBinding,
+            presenting: pendingWorktreeRemoval
+        ) { confirmation in
+            Button("Remove", role: .destructive) {
+                performRemove(worktree: confirmation.worktree)
+                pendingWorktreeRemoval = nil
+            }
+            .keyboardShortcut(.defaultAction)
+            Button("Cancel", role: .cancel) {
+                pendingWorktreeRemoval = nil
+            }
+            .keyboardShortcut(.cancelAction)
+        } message: { confirmation in
+            Text(confirmation.message)
+        }
+    }
+
+    private var projectHeader: some View {
+        HStack(spacing: UIMetrics.spacing4) {
+            projectIcon
+
+            VStack(alignment: .leading, spacing: UIMetrics.scaled(1)) {
+                Text(project.name)
+                    .font(.system(size: UIMetrics.fontEmphasis, weight: isActive ? .semibold : .medium))
+                    .foregroundStyle(MuxyTheme.fg)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                if hasWorktreeUI, let worktree = activeWorktree {
+                    Text(worktree.isPrimary ? "primary" : worktree.name)
+                        .font(.system(size: UIMetrics.fontFootnote, design: .monospaced))
+                        .foregroundStyle(MuxyTheme.fg)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+
+            Spacer(minLength: UIMetrics.spacing2)
+
+            worktreeAccessory
+        }
+        .padding(UIMetrics.spacing2)
+        .background(headerBackground, in: RoundedRectangle(cornerRadius: UIMetrics.radiusLG))
+        .contentShape(RoundedRectangle(cornerRadius: UIMetrics.radiusLG))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(projectHeaderAccessibilityLabel)
+        .accessibilityAddTraits(isActive ? .isSelected : [])
+        .accessibilityAddTraits(.isButton)
+        .onHover { hovering in
+            guard !isAnyDragging else { return }
+            hovered = hovering
+        }
+        .onChange(of: isAnyDragging) { _, dragging in
+            if dragging { hovered = false }
+        }
+        .onTapGesture {
+            guard !isAnyDragging else { return }
+            if isActive, hasWorktreeUI {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    worktreesExpanded.toggle()
+                }
+            } else {
+                onSelect()
+            }
+        }
+        .overlay {
+            if showShortcutBadge, let shortcutIndex,
+               let action = ShortcutAction.projectAction(for: shortcutIndex)
+            {
+                ShortcutBadge(label: KeyBindingStore.shared.combo(for: action).displayString)
+            }
+        }
+    }
+
+    private var worktreeChevron: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                worktreesExpanded.toggle()
+            }
+        } label: {
+            Image(systemName: "chevron.right")
+                .font(.system(size: UIMetrics.fontXS, weight: .semibold))
+                .foregroundStyle(MuxyTheme.fg)
+                .rotationEffect(.degrees(worktreesExpanded ? 90 : 0))
+                .animation(.easeInOut(duration: 0.15), value: worktreesExpanded)
+                .frame(width: UIMetrics.scaled(18), height: UIMetrics.scaled(18))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(worktreesExpanded ? "Collapse Worktrees" : "Expand Worktrees")
+    }
+
+    @ViewBuilder
+    private var worktreeAccessory: some View {
+        if hasWorktreeUI {
+            worktreeChevron
+        } else if isCheckingGitRepo {
+            ProgressView()
+                .controlSize(.mini)
+                .frame(width: UIMetrics.scaled(18), height: UIMetrics.scaled(18))
+        } else {
+            Color.clear
+                .frame(width: UIMetrics.scaled(18), height: UIMetrics.scaled(18))
+        }
+    }
+
+    private var projectIcon: some View {
+        let logo = resolvedLogo
+        let unread = NotificationStore.shared.unreadCount(for: project.id)
+        let hasCompletion = TerminalProgressStore.shared.hasCompletionPending(for: project.id)
+        return ZStack {
+            RoundedRectangle(cornerRadius: UIMetrics.radiusMD)
+                .fill(iconBackground(hasLogo: logo != nil))
+
+            if let logo {
+                Image(nsImage: logo)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: UIMetrics.iconXXL, height: UIMetrics.iconXXL)
+                    .clipShape(RoundedRectangle(cornerRadius: UIMetrics.radiusMD))
+            } else if let iconName = project.icon {
+                Image(systemName: iconName)
+                    .font(.system(size: UIMetrics.fontTitleLarge, weight: .medium))
+                    .foregroundStyle(letterForeground)
+            } else {
+                Text(displayLetter)
+                    .font(.system(size: UIMetrics.fontEmphasis, weight: .bold))
+                    .foregroundStyle(letterForeground)
+            }
+        }
+        .frame(width: UIMetrics.iconXXL, height: UIMetrics.iconXXL)
+        .overlay(alignment: .topTrailing) {
+            if unread > 0 {
+                NotificationBadge(count: unread)
+                    .offset(x: UIMetrics.spacing2, y: -UIMetrics.spacing2)
+            } else if hasCompletion {
+                Circle()
+                    .fill(MuxyTheme.accent)
+                    .frame(width: UIMetrics.scaled(8), height: UIMetrics.scaled(8))
+                    .offset(x: UIMetrics.spacing1, y: -UIMetrics.spacing1)
+            }
+        }
+    }
+
+    private var worktreeList: some View {
+        VStack(spacing: UIMetrics.scaled(1)) {
+            ForEach(worktrees) { worktree in
+                ExpandedWorktreeRow(
+                    projectID: project.id,
+                    worktree: worktree,
+                    selected: worktree.id == activeWorktreeID,
+                    projectActive: isActive,
+                    onSelect: {
+                        appState.selectWorktree(projectID: project.id, worktree: worktree)
+                    },
+                    onRename: { newName in
+                        worktreeStore.rename(
+                            worktreeID: worktree.id,
+                            in: project.id,
+                            to: newName
+                        )
+                    },
+                    onRemove: worktree.canBeRemoved ? {
+                        Task { await requestRemove(worktree: worktree) }
+                    } : nil
+                )
+            }
+
+            ExpandedNewWorktreeButton {
+                showCreateWorktreeSheet = true
+            }
+        }
+        .padding(.top, UIMetrics.spacing1)
+        .padding(.bottom, UIMetrics.spacing2)
+    }
+
+    private var projectHeaderAccessibilityLabel: String {
+        var label = project.name
+        if hasWorktreeUI, let worktree = activeWorktree {
+            label += ", worktree: \(worktree.isPrimary ? "primary" : worktree.name)"
+        }
+        return label
+    }
+
+    private var resolvedLogo: NSImage? {
+        guard let filename = project.logo else { return nil }
+        return NSImage(contentsOfFile: ProjectLogoStorage.logoPath(for: filename))
+    }
+
+    private func iconBackground(hasLogo: Bool) -> AnyShapeStyle {
+        if hasLogo { return AnyShapeStyle(Color.clear) }
+        if let tint = ProjectIconColor.color(for: project.iconColor) {
+            return AnyShapeStyle(hovered ? tint.opacity(0.85) : tint)
+        }
+        if hovered { return AnyShapeStyle(MuxyTheme.fg.opacity(0.22)) }
+        return AnyShapeStyle(MuxyTheme.fg.opacity(0.18))
+    }
+
+    private var letterForeground: Color {
+        if let foreground = ProjectIconColor.foreground(for: project.iconColor) {
+            return foreground
+        }
+        return isActive ? MuxyTheme.fg : MuxyTheme.fgMuted
+    }
+
+    private var headerBackground: AnyShapeStyle {
+        if isActive { return AnyShapeStyle(MuxyTheme.accentSoft) }
+        if hovered { return AnyShapeStyle(MuxyTheme.hover) }
+        return AnyShapeStyle(Color.clear)
+    }
+
+    private var showShortcutBadge: Bool {
+        guard let shortcutIndex,
+              let action = ShortcutAction.projectAction(for: shortcutIndex)
+        else { return false }
+        return ModifierKeyMonitor.shared.isHolding(
+            modifiers: KeyBindingStore.shared.combo(for: action).modifiers
+        )
+    }
+
+    private func pickLogoImage() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose a Logo Image"
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+
+        guard panel.runModal() == .OK,
+              let url = panel.url,
+              let image = NSImage(contentsOf: url)
+        else { return }
+
+        logoCropImage = IdentifiableExpandedImage(image: image)
+    }
+
+    private func handleCreateWorktreeResult(_ result: CreateWorktreeResult) {
+        switch result {
+        case let .created(worktree, runSetup):
+            appState.selectWorktree(projectID: project.id, worktree: worktree)
+            worktreesExpanded = true
+            if runSetup,
+               let paneID = appState.focusedArea(for: project.id)?.activeTab?.content.pane?.id
+            {
+                Task {
+                    await WorktreeSetupRunner.run(
+                        sourceProjectPath: project.path,
+                        paneID: paneID
+                    )
+                }
+            }
+        case .cancelled:
+            break
+        }
+    }
+
+    @MainActor
+    private func requestRemove(worktree: Worktree) async {
+        let hasChanges = await GitWorktreeService.shared.hasUncommittedChanges(worktreePath: worktree.path)
+        pendingWorktreeRemoval = WorktreeRemovalConfirmation(
+            worktree: worktree,
+            hasUncommittedChanges: hasChanges
+        )
+    }
+
+    private var worktreeRemovalAlertBinding: Binding<Bool> {
+        Binding(
+            get: { pendingWorktreeRemoval != nil },
+            set: { newValue in
+                if !newValue {
+                    pendingWorktreeRemoval = nil
+                }
+            }
+        )
+    }
+
+    private func performRemove(worktree: Worktree) {
+        let remaining = worktrees.filter { $0.id != worktree.id }
+        let replacement = remaining.first(where: { $0.id == activeWorktreeID })
+            ?? remaining.first(where: { $0.isPrimary })
+            ?? remaining.first
+        removalRequest = WorktreeRemovalRequest(
+            worktree: worktree,
+            repoPath: project.path,
+            onSuccess: {
+                appState.removeWorktree(
+                    projectID: project.id,
+                    worktree: worktree,
+                    replacement: replacement
+                )
+                worktreeStore.remove(worktreeID: worktree.id, from: project.id)
+            }
+        )
+    }
+
+    private func startRename() {
+        renameText = project.name
+        isRenaming = true
+    }
+
+    private func commitRename() {
+        let trimmed = renameText.trimmingCharacters(in: .whitespaces)
+        if !trimmed.isEmpty {
+            onRename(trimmed)
+        }
+        isRenaming = false
+    }
+
+    private func cancelRename() {
+        isRenaming = false
+    }
+
+    private func refreshWorktrees() async {
+        await WorktreeRefreshHelper.refresh(
+            project: project,
+            appState: appState,
+            worktreeStore: worktreeStore,
+            isRefreshing: $isRefreshingWorktrees
+        )
+    }
+}
+
+private struct ExpandedWorktreeRow: View {
+    let projectID: UUID
+    let worktree: Worktree
+    let selected: Bool
+    let projectActive: Bool
+    let onSelect: () -> Void
+    let onRename: (String) -> Void
+    let onRemove: (() -> Void)?
+
+    @State private var hovered = false
+    @State private var isRenaming = false
+    @State private var renameText = ""
+    @FocusState private var renameFieldFocused: Bool
+
+    private var displayName: String {
+        if worktree.isPrimary, worktree.name.isEmpty { return "main" }
+        return worktree.name
+    }
+
+    private var branchLabel: String? {
+        guard !worktree.isPrimary else { return nil }
+        guard let branch = worktree.branch, !branch.isEmpty else { return nil }
+        guard branch.caseInsensitiveCompare(displayName) != .orderedSame else { return nil }
+        return branch
+    }
+
+    var body: some View {
+        HStack(spacing: UIMetrics.spacing3) {
+            leadingIndicator
+
+            if isRenaming {
+                TextField("", text: $renameText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: UIMetrics.fontFootnote, weight: .medium))
+                    .foregroundStyle(MuxyTheme.fg)
+                    .focused($renameFieldFocused)
+                    .onSubmit { commitRename() }
+                    .onExitCommand { cancelRename() }
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: UIMetrics.spacing2) {
+                        Text(displayName)
+                            .font(.system(size: UIMetrics.fontBody, weight: activeStyle ? .semibold : .regular))
+                            .foregroundStyle(MuxyTheme.fg)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+
+                        if worktree.isPrimary {
+                            PrimaryBadge()
+                        }
+                    }
+
+                    if let branch = branchLabel {
+                        Text(branch)
+                            .font(.system(size: UIMetrics.fontCaption, design: .monospaced))
+                            .foregroundStyle(MuxyTheme.fg)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+            }
+
+            Spacer(minLength: UIMetrics.spacing1)
+        }
+        .padding(.horizontal, UIMetrics.spacing4)
+        .padding(.vertical, UIMetrics.scaled(7))
+        .background(rowBackground, in: RoundedRectangle(cornerRadius: UIMetrics.radiusMD))
+        .contentShape(RoundedRectangle(cornerRadius: UIMetrics.radiusMD))
+        .onHover { hovered = $0 }
+        .onTapGesture {
+            guard !isRenaming else { return }
+            onSelect()
+        }
+        .contextMenu {
+            if worktree.isPrimary {
+                Text("Primary worktree").font(.system(size: UIMetrics.fontFootnote))
+            } else if let onRemove {
+                Button("Rename") { startRename() }
+                Divider()
+                Button("Remove", role: .destructive, action: onRemove)
+            } else {
+                Button("Rename") { startRename() }
+                Divider()
+                Text("External worktree").font(.system(size: UIMetrics.fontFootnote))
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(worktreeAccessibilityLabel)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private var worktreeAccessibilityLabel: String {
+        var label = displayName
+        if worktree.isPrimary { label += ", primary" }
+        if let branch = branchLabel { label += ", branch: \(branch)" }
+        return label
+    }
+
+    @ViewBuilder
+    private var leadingIndicator: some View {
+        let unread = NotificationStore.shared.unreadCount(for: projectID, worktreeID: worktree.id)
+        ZStack {
+            if unread > 0 {
+                Circle().fill(MuxyTheme.accent).frame(width: UIMetrics.scaled(8), height: UIMetrics.scaled(8))
+            } else if selected {
+                Circle().fill(MuxyTheme.accent.opacity(0.4)).frame(width: UIMetrics.scaled(5), height: UIMetrics.scaled(5))
+            }
+        }
+        .frame(width: UIMetrics.scaled(8), height: UIMetrics.scaled(8))
+    }
+
+    private var activeStyle: Bool { selected && projectActive }
+
+    private var rowBackground: AnyShapeStyle {
+        if activeStyle { return AnyShapeStyle(MuxyTheme.accentSoft) }
+        if hovered { return AnyShapeStyle(MuxyTheme.hover) }
+        return AnyShapeStyle(Color.clear)
+    }
+
+    private func startRename() {
+        renameText = worktree.name
+        isRenaming = true
+        renameFieldFocused = true
+    }
+
+    private func commitRename() {
+        let trimmed = renameText.trimmingCharacters(in: .whitespaces)
+        if !trimmed.isEmpty { onRename(trimmed) }
+        isRenaming = false
+    }
+
+    private func cancelRename() {
+        isRenaming = false
+    }
+}
+
+private struct ExpandedNewWorktreeButton: View {
+    let action: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: UIMetrics.spacing3) {
+                Image(systemName: "plus")
+                    .font(.system(size: UIMetrics.fontCaption, weight: .medium))
+                    .foregroundStyle(hovered ? MuxyTheme.accent : MuxyTheme.fg)
+                    .frame(width: UIMetrics.scaled(8), height: UIMetrics.scaled(8))
+                Text("New Worktree")
+                    .font(.system(size: UIMetrics.fontFootnote, weight: .medium))
+                    .foregroundStyle(hovered ? MuxyTheme.accent : MuxyTheme.fg)
+                Spacer()
+            }
+            .padding(.horizontal, UIMetrics.spacing4)
+            .padding(.vertical, UIMetrics.scaled(5))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .accessibilityLabel("New Worktree")
+    }
+}
+
+private struct PrimaryBadge: View {
+    var body: some View {
+        Text("PRIMARY")
+            .font(.system(size: UIMetrics.fontMicro, weight: .bold))
+            .tracking(0.4)
+            .foregroundStyle(MuxyTheme.fg)
+            .padding(.horizontal, UIMetrics.spacing2)
+            .padding(.vertical, UIMetrics.scaled(1))
+            .background(MuxyTheme.surface, in: Capsule())
+    }
+}
+
+private struct ExpandedRenamePopover: View {
+    @Binding var text: String
+    let onCommit: () -> Void
+    let onCancel: () -> Void
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        VStack(spacing: UIMetrics.spacing4) {
+            Text("Rename Project")
+                .font(.system(size: UIMetrics.fontBody, weight: .semibold))
+                .foregroundStyle(MuxyTheme.fg)
+            TextField("Project name", text: $text)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: UIMetrics.fontBody))
+                .focused($isFocused)
+                .onSubmit { onCommit() }
+                .onExitCommand { onCancel() }
+        }
+        .padding(UIMetrics.spacing6)
+        .frame(width: UIMetrics.scaled(200))
+        .onAppear { isFocused = true }
+    }
+}
+
+private struct IdentifiableExpandedImage: Identifiable {
+    let id = UUID()
+    let image: NSImage
+}
