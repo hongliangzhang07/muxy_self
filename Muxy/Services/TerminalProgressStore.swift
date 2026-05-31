@@ -46,6 +46,7 @@ final class TerminalProgressStore {
         }
 
         if let progress {
+            guard existing != progress else { return }
             progresses[paneID] = progress
             return
         }

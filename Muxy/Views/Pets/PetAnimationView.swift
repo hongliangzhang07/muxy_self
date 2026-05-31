@@ -30,6 +30,8 @@ final class PetAnimationNSView: NSView {
     private var frameIndex = 0
     private var timer: Timer?
     private var isReduceMotion = false
+    private var isWindowVisible = true
+    private var occlusionObserver: NSObjectProtocol?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -43,6 +45,38 @@ final class PetAnimationNSView: NSView {
     @available(*, unavailable)
     required init?(coder _: NSCoder) {
         fatalError("init(coder:) is not supported")
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let occlusionObserver {
+            NotificationCenter.default.removeObserver(occlusionObserver)
+            self.occlusionObserver = nil
+        }
+        guard let window else {
+            isWindowVisible = false
+            stop()
+            return
+        }
+        occlusionObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didChangeOcclusionStateNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.updateVisibility() }
+        }
+        updateVisibility()
+    }
+
+    private func updateVisibility() {
+        let visible = window?.occlusionState.contains(.visible) ?? false
+        guard visible != isWindowVisible else { return }
+        isWindowVisible = visible
+        if visible, !isReduceMotion {
+            scheduleNextFrame()
+        } else {
+            stop()
+        }
     }
 
     override func layout() {
@@ -104,6 +138,7 @@ final class PetAnimationNSView: NSView {
 
     private func scheduleNextFrame() {
         stop()
+        guard isWindowVisible else { return }
         let durations = currentState.durationsMs
         guard frameIndex < durations.count else { return }
         let interval = Double(durations[frameIndex]) / 1000.0

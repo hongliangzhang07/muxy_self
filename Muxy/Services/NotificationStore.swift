@@ -131,6 +131,7 @@ final class NotificationStore {
            NSApp.isActive,
            NotificationNavigator.isActiveTab(notification.tabID, appState: appState)
         {
+            PetStateController.shared.react(to: notification)
             return
         }
 

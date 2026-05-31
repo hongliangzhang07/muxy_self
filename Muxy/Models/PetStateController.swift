@@ -53,8 +53,9 @@ final class PetStateController {
     }
 
     func trigger(_ state: PetState, holding duration: Duration = .milliseconds(1800)) {
-        guard pulse != state else { return }
-        pulse = state
+        if pulse != state {
+            pulse = state
+        }
         clearTask?.cancel()
         clearTask = Task { [weak self] in
             try? await Task.sleep(for: duration)

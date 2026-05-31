@@ -78,6 +78,7 @@ final class PetPackageStore {
     private static func loadPackage(from directory: URL, source: PetPackage.Source) -> PetPackage? {
         let manifestURL = directory.appendingPathComponent("pet.json")
         guard let manifest = decodeManifest(at: manifestURL) else { return nil }
+        guard !manifest.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         guard let spritesheetURL = resolveSpritesheet(manifest.spritesheetPath, in: directory) else { return nil }
         guard hasValidAtlasDimensions(at: spritesheetURL) else {
             logger.error("Pet package \(manifest.id) rejected: invalid atlas dimensions")

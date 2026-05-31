@@ -10,6 +10,9 @@ final class PetWindowController {
     private var defaultsObserver: NSObjectProtocol?
     private var moveObserver: NSObjectProtocol?
     private var lastOriginX: CGFloat?
+    private var isShown = false
+    private var lastAppliedSize: CGFloat?
+    private var screenObserver: NSObjectProtocol?
 
     private static let frameAutosaveName = "muxy.pet.window"
 
@@ -23,6 +26,13 @@ final class PetWindowController {
         ) { [weak self] _ in
             Task { @MainActor in self?.applyState() }
         }
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.ensureOnScreen() }
+        }
     }
 
     private var isEnabled: Bool {
@@ -35,12 +45,21 @@ final class PetWindowController {
 
     private func applyState() {
         guard isEnabled, let appState else {
-            panel?.orderOut(nil)
+            if isShown {
+                panel?.orderOut(nil)
+                isShown = false
+            }
             return
         }
         let panel = ensurePanel(appState: appState)
-        fitToContent()
-        panel.orderFrontRegardless()
+        if lastAppliedSize != petSize {
+            lastAppliedSize = petSize
+            fitToContent()
+        }
+        if !isShown {
+            panel.orderFrontRegardless()
+            isShown = true
+        }
     }
 
     private func ensurePanel(appState: AppState) -> NSPanel {
@@ -67,14 +86,26 @@ final class PetWindowController {
         hosting.autoresizingMask = [.width, .height]
         panel.contentView = hosting
 
-        let hasSavedFrame = panel.setFrameAutosaveName(Self.frameAutosaveName)
-        if !hasSavedFrame || panel.frame.origin == .zero {
+        _ = panel.setFrameAutosaveName(Self.frameAutosaveName)
+        if !isFrameOnVisibleScreen(panel.frame) {
             positionDefault(panel)
         }
 
         self.panel = panel
         observeMoves(panel)
         return panel
+    }
+
+    private func isFrameOnVisibleScreen(_ frame: NSRect) -> Bool {
+        NSScreen.screens.contains { screen in
+            let overlap = screen.visibleFrame.intersection(frame)
+            return overlap.width >= 20 && overlap.height >= 20
+        }
+    }
+
+    private func ensureOnScreen() {
+        guard let panel, !isFrameOnVisibleScreen(panel.frame) else { return }
+        positionDefault(panel)
     }
 
     func fitToContent() {
@@ -89,6 +120,7 @@ final class PetWindowController {
             NSRect(x: old.maxX - width, y: old.minY, width: width, height: height),
             display: true
         )
+        lastOriginX = panel.frame.origin.x
     }
 
     private func positionDefault(_ panel: NSPanel) {
